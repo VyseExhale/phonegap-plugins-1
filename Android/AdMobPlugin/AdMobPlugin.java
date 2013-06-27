@@ -9,9 +9,11 @@ import com.google.ads.AdView;
 import com.google.ads.mediation.admob.AdMobAdapterExtras;
 
 import android.util.Log;
+import android.view.View;
 
 import org.apache.cordova.LinearLayoutSoftKeyboardDetect;
-import org.apache.cordova.api.Plugin;
+import org.apache.cordova.api.CallbackContext;
+import org.apache.cordova.api.CordovaPlugin;
 import org.apache.cordova.api.PluginResult;
 import org.apache.cordova.api.PluginResult.Status;
 import org.json.JSONArray;
@@ -25,7 +27,7 @@ import java.util.Iterator;
  * This plugin can be used to request AdMob ads natively via the Google AdMob SDK.
  * The Google AdMob SDK is a dependency for this plugin.
  */
-public class AdMobPlugin extends Plugin {
+public class AdMobPlugin extends CordovaPlugin {
   /** The adView to display to the user. */
   private AdView adView;
 
@@ -38,6 +40,7 @@ public class AdMobPlugin extends Plugin {
   /** Cordova Actions. */
   private static final String ACTION_CREATE_BANNER_VIEW = "createBannerView";
   private static final String ACTION_REQUEST_AD = "requestAd";
+  private CallbackContext callback ;
 
   /**
    * This is the main method for the AdMob plugin.  All API calls go through here.
@@ -50,17 +53,23 @@ public class AdMobPlugin extends Plugin {
    *         status of INVALID_ACTION is returned if the action is not recognized.
    */
   @Override
-  public PluginResult execute(String action, JSONArray inputs, String callbackId) {
-    PluginResult result = null;
+  public boolean execute(String action, JSONArray inputs, CallbackContext callbackContext) {
+    callback = callbackContext;
     if (ACTION_CREATE_BANNER_VIEW.equals(action)) {
-      result = executeCreateBannerView(inputs);
+      executeCreateBannerView(inputs);
+      
+      return true;
     } else if (ACTION_REQUEST_AD.equals(action)) {
-      result = executeRequestAd(inputs);
-    } else {
+      executeRequestAd(inputs);
+     return true;
+    } else if(action.equals("showHide")){ 
+       showHide(inputs);
+         return true;
+    }else {
       Log.d(LOGTAG, String.format("Invalid action passed: %s", action));
-      result = new PluginResult(Status.INVALID_ACTION);
+      callback.error("Invalid Action");
     }
-    return result;
+    return false;
   }
 
   /**
@@ -74,23 +83,23 @@ public class AdMobPlugin extends Plugin {
    * @return A PluginResult representing whether or not the banner was created
    *         successfully.
    */
-  private PluginResult executeCreateBannerView(JSONArray inputs) {
+  private void executeCreateBannerView(JSONArray inputs) {
     String publisherId;
     String size;
-
+  
     // Get the input data.
     try {
-      JSONObject data = inputs.getJSONObject(0);
-      publisherId = data.getString("publisherId");
-      size = data.getString("adSize");
-      this.positionAtTop = data.getBoolean("positionAtTop");
+    	publisherId 	= inputs.getString(0);
+    	size			= inputs.getString(1);
+      this.positionAtTop = Boolean.parseBoolean(inputs.getString(2));
     } catch (JSONException exception) {
       Log.w(LOGTAG, String.format("Got JSON Exception: %s", exception.getMessage()));
-      return new PluginResult(Status.JSON_EXCEPTION);
+      callback.error(exception.getMessage());
+      return;
     }
 
     // Create the AdView on the UI thread.
-    return executeRunnable(new CreateBannerViewRunnable(
+    this.executeRunnable(new CreateBannerViewRunnable(
         publisherId, adSizeFromSize(size)));
   }
 
@@ -105,22 +114,21 @@ public class AdMobPlugin extends Plugin {
    *         succcessfully.  Listen for onReceiveAd() and onFailedToReceiveAd()
    *         callbacks to see if an ad was successfully retrieved. 
    */
-  private PluginResult executeRequestAd(JSONArray inputs) {
-    boolean isTesting;
-    JSONObject inputExtras;
+  private void executeRequestAd(JSONArray inputs) {
+    boolean isTesting = false;
+    JSONObject inputExtras = null;
 
     // Get the input data.
     try {
-      JSONObject data = inputs.getJSONObject(0);
-      isTesting = data.getBoolean("isTesting");
-      inputExtras = data.getJSONObject("extras");
+      isTesting = Boolean.parseBoolean(inputs.getString(0));
+      inputExtras = new JSONObject(inputs.getString(1));
     } catch (JSONException exception) {
       Log.w(LOGTAG, String.format("Got JSON Exception: %s", exception.getMessage()));
-      return new PluginResult(Status.JSON_EXCEPTION);
+      callback.error(exception.getMessage());
     }
 
     // Request an ad on the UI thread.
-    return executeRunnable(new RequestAdRunnable(isTesting, inputExtras));
+    executeRunnable(new RequestAdRunnable(isTesting, inputExtras));
   }
 
   /**
@@ -131,17 +139,17 @@ public class AdMobPlugin extends Plugin {
    * @param runnable The AdMobRunnable representing the command to run.
    * @return A PluginResult representing the result of the command.
    */
-  private PluginResult executeRunnable(AdMobRunnable runnable) {
+  private void executeRunnable(AdMobRunnable runnable) {
     synchronized (runnable) {
       cordova.getActivity().runOnUiThread(runnable);
       try {
         runnable.wait();
       } catch (InterruptedException exception) {
         Log.w(LOGTAG, String.format("Interrupted Exception: %s", exception.getMessage()));
-        return new PluginResult(Status.ERROR, "Interruption occurred when running on UI thread");
+        callback.error(exception.getMessage()+" Interruption occurred when running on UI thread");
       }
     }
-    return runnable.getPluginResult();
+    runnable.getPluginResult();
   }
 
   /**
@@ -151,6 +159,7 @@ public class AdMobPlugin extends Plugin {
     protected PluginResult result;
 
     public PluginResult getPluginResult() {
+    	
       return result;
     }
   }
@@ -169,7 +178,7 @@ public class AdMobPlugin extends Plugin {
     @Override
     public void run() {
       if (adSize == null) {
-        result = new PluginResult(Status.ERROR, "AdSize is null. Did you use an AdSize constant?");
+        callback.error("AdSize is null. Did you use an AdSize constant?");
       } else {
         adView = new AdView(cordova.getActivity(), adSize, publisherId);
         adView.setAdListener(new BannerListener());
@@ -179,9 +188,10 @@ public class AdMobPlugin extends Plugin {
           parentView.addView(adView, 0);
         } else {
           parentView.addView(adView);
+         
         }
         // Notify the plugin.
-        result = new PluginResult(Status.OK);
+        callback.success();
       }
       synchronized (this) {
         this.notify();
@@ -204,7 +214,8 @@ public class AdMobPlugin extends Plugin {
     @Override
     public void run() {
       if (adView == null) {
-        result = new PluginResult(Status.ERROR, "AdView is null.  Did you call createBannerView?");
+    	  callback.error("AdView is null.  Did you call createBannerView?");
+    	  return;
       } else {
         AdRequest request = new AdRequest();
         if (isTesting) {
@@ -223,7 +234,7 @@ public class AdMobPlugin extends Plugin {
             extras.addExtra(key, inputExtras.get(key));
           } catch (JSONException exception) {
             Log.w(LOGTAG, String.format("Caught JSON Exception: %s", exception.getMessage()));
-            result = new PluginResult(Status.JSON_EXCEPTION, "Error grabbing extras");
+            callback.error("Error grabbing extras");
             inputValid = false;
           }
         }
@@ -231,8 +242,8 @@ public class AdMobPlugin extends Plugin {
           extras.addExtra("cordova", 1);
           request.setNetworkExtras(extras);
           adView.loadAd(request);
-          result = new PluginResult(Status.OK);
-        }
+          callback.success();
+          }
       }
       synchronized (this) {
         this.notify();
@@ -279,13 +290,7 @@ public class AdMobPlugin extends Plugin {
     }
   }
 
-  @Override
-  public void onDestroy() {
-    if (adView != null) {
-      adView.destroy();
-    }
-    super.onDestroy();
-  }
+
 
   /**
    * Gets an AdSize object from the string size passed in from JavaScript.
@@ -309,5 +314,54 @@ public class AdMobPlugin extends Plugin {
       return null;
     }
   }
-}
+  
+  public void showHide(JSONArray inputs){
+	  String showorhide = null;
+	  try {
+		  showorhide = inputs.getString(0);
+	} catch (JSONException e) {
+		// TODO Auto-generated catch block
+		e.printStackTrace();
+	}
+	  executeRunnable(new showHideRunnable(showorhide));
+  }
+  
+  
+  /** Runnable for the createBannerView action. */
+  private class showHideRunnable extends AdMobRunnable {
+	private String hideorshow;
+    public showHideRunnable(String hideorshow) {
+    	this.hideorshow = hideorshow;
+        result = new PluginResult(Status.NO_RESULT);
+    }
 
+    @Override
+    public void run() {
+    	Log.d(LOGTAG,"SHOW OR HIDsE = "+hideorshow);
+      if(hideorshow == null){
+    	  callback.error("hideorshow is null. Did you use an hideorshow constant?");
+      }  else if (adView == null) {
+    	  callback.error("AdSize is null. Did you use an AdSize constant?");
+      } else {
+    	  if(hideorshow.equals("hide")){
+    		  adView.setVisibility(View.GONE);
+    	  }else if(hideorshow.equals("show")){
+    		  Log.d(LOGTAG,"Shown");
+    		  adView.setVisibility(View.VISIBLE);
+    	  }
+        callback.success();
+      }
+      synchronized (this) {
+        this.notify();
+      }
+    }
+  }
+  
+  @Override
+  public void onDestroy() {
+    if (adView != null) {
+      adView.destroy();
+    }
+    super.onDestroy();
+  }
+}
