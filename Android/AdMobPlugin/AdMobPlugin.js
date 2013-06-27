@@ -127,3 +127,18 @@ AdMob.prototype.requestAd =
       new Array(defaults)
   );
 };
+
+
+/* hide or show the adView*/
+AdMob.prototype.showHide =  function(showorhide, successCallback, failureCallback) {
+  if(!(showorhide == 'hide' || showorhide == 'show')){
+      return false;
+  }
+  cordova.exec(
+     successCallback,
+     failureCallback,
+     'AdMobPlugin',
+     'showHide',
+     [showorhide]
+ );
+};
